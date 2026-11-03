@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import sqlite3
+import time
+from contextlib import closing
 from typing import Protocol, TypeVar
 
 import httpx
@@ -15,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 RETRY_TEMPERATURE = 0.3
+MAX_CACHE_ENTRIES = 5000
 
 
 class LLMError(Exception):
@@ -33,6 +39,7 @@ class LLMUsage(BaseModel):
     prompt_tokens: int = 0
     output_tokens: int = 0
     duration_seconds: float = 0.0
+    cached: bool = False
 
 
 class LLM(Protocol):
@@ -108,3 +115,85 @@ class OllamaLLM:
             raise LLMInvalidOutputError(
                 f"Response did not match {schema.__name__}: {exc.error_count()} errors"
             ) from exc
+
+
+class CachedLLM:
+    """Reuses structured responses for identical prompts, so only changed code costs model time.
+
+    The key covers everything that shapes the response, so changed code misses by itself. Prompts
+    are not stored, and failures are not cached.
+    """
+
+    def __init__(self, inner: LLM, settings: Settings) -> None:
+        self._inner = inner
+        self._settings = settings
+        self._path = settings.llm_cache_path
+
+    def _connect(self) -> sqlite3.Connection:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self._path, timeout=5)
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at REAL NOT NULL)"
+        )
+        # Responses can quote project code, so only this user should read them.
+        self._path.chmod(0o600)
+        return connection
+
+    def _key(self, system: str, user: str, schema: type[BaseModel]) -> str:
+        settings = self._settings
+        parts = [
+            settings.ollama_model,
+            settings.ollama_num_ctx,
+            settings.ollama_num_predict,
+            system,
+            user,
+            schema.model_json_schema(),
+        ]
+        return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+
+    def _load(self, key: str) -> str | None:
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute("SELECT value FROM llm_cache WHERE key = ?", (key,)).fetchone()
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("llm_cache_unavailable error=%s", exc)
+            return None
+        return row[0] if row else None
+
+    def _store(self, key: str, value: str) -> None:
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "INSERT OR REPLACE INTO llm_cache (key, value, created_at) VALUES (?, ?, ?)",
+                    (key, value, time.time()),
+                )
+                connection.execute(
+                    "DELETE FROM llm_cache WHERE key NOT IN "
+                    "(SELECT key FROM llm_cache ORDER BY created_at DESC LIMIT ?)",
+                    (MAX_CACHE_ENTRIES,),
+                )
+        except (sqlite3.Error, OSError) as exc:
+            # A cache problem should cost time, never a result.
+            logger.warning("llm_cache_unavailable error=%s", exc)
+
+    def complete(self, system: str, user: str) -> tuple[str, LLMUsage]:
+        return self._inner.complete(system, user)
+
+    def complete_structured(
+        self, system: str, user: str, schema: type[SchemaT]
+    ) -> tuple[SchemaT, LLMUsage]:
+        key = self._key(system, user, schema)
+        stored = self._load(key)
+        if stored is not None:
+            try:
+                return schema.model_validate_json(stored), LLMUsage(cached=True)
+            except ValidationError:
+                logger.info("llm_cache_entry_invalid schema=%s", schema.__name__)
+        result, usage = self._inner.complete_structured(system, user, schema)
+        self._store(key, result.model_dump_json())
+        return result, usage
+
+
+def build_llm(settings: Settings) -> LLM:
+    llm = OllamaLLM(settings)
+    return CachedLLM(llm, settings) if settings.llm_cache_enabled else llm

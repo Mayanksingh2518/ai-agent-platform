@@ -29,6 +29,9 @@ class Metrics(BaseModel):
     cache_hits: int = 0
 
     def add_usage(self, usage: LLMUsage) -> None:
+        if usage.cached:
+            self.cache_hits += 1
+            return
         self.llm_calls += 1
         self.prompt_tokens += usage.prompt_tokens
         self.output_tokens += usage.output_tokens

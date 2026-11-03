@@ -38,7 +38,7 @@ User → Claude Code → MCP server (STDIO) → LangGraph supervisor → special
      → Ollama (granite4.1:3b) → compact structured result → Claude Code
 ```
 
-Run the server with `python -m app.mcp.server`. An MCP tool sets the task directly, which skips LLM classification.
+Run the server with `python -P -m app.mcp.server` and `PYTHONPATH` set to this repo. Without `-P`, a project's own `app/` folder shadows this package when Claude Code starts the server there. An MCP tool sets the task directly, which skips LLM classification.
 
 ## Agents
 

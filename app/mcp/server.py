@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 from app.config.logging_config import configure_logging
 from app.config.settings import Settings, get_settings
 from app.graph.workflow import run_task
-from app.llm import LLM, OllamaLLM
+from app.llm import LLM, build_llm
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ def to_tool_output(output: dict[str, Any], *, notice: str | None = None) -> str:
     body = {**output["result"], "metrics": output["metrics"]}
     if notice:
         body["notice"] = notice
+    text = json.dumps(body, separators=(",", ":"))
+    # What this result costs Claude Code, kept in the log for comparing real usage later.
+    logger.info("tool_result task=%s result_chars=%d", output["result"].get("task"), len(text))
+    body["metrics"] = {**output["metrics"], "result_chars": len(text)}
     return json.dumps(body, separators=(",", ":"))
 
 
@@ -138,7 +142,7 @@ def main() -> None:
     settings = get_settings()
     configure_logging(settings)
     logger.info("mcp_server_starting workspaces=%s", [str(p) for p in settings.allowed_workspaces])
-    build_server(OllamaLLM(settings), settings).run("stdio")
+    build_server(build_llm(settings), settings).run("stdio")
 
 
 if __name__ == "__main__":

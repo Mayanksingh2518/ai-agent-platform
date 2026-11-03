@@ -4,11 +4,11 @@ The brief, rules and decisions are in [CLAUDE.md](CLAUDE.md).
 
 ## Current status
 
-- **Phase:** 5 is built and tested. Phase 6, Token Optimization, is next. Phase 4 step 6 still needs project paths from the user.
-- **To use the new tools:** reload VS Code, because the running server still has the old four. A real Claude Code call to `explain_code`, `debug_error` and `run_tests` is not yet verified.
-- **Tests:** see the latest log entry (`.venv/bin/python -m pytest`)
-- **MCP server:** registered at user scope. Seven tools exist; the original four are verified by real calls from Claude Code
-- **Token savings:** not measured
+- **Phase:** 6, Token Optimization, is closed. No saving was measured, whether tool use was optional or forced. See **Token comparison** below. The user chose to unregister the server. The tools remain usable through `python -m app.main`.
+- **Tests:** 207 passed, including real Granite calls (`.venv/bin/python -m pytest`)
+- **MCP server:** unregistered at the user's choice. The code is intact, and all seven tools were verified from Claude Code before removal
+- **Workspaces:** FinRAG is readable; its tests are not allowed to run
+- **Token savings:** none measured, on a small sample
 - **Open quality issue:** Granite's review findings and prose are unreliable; see below
 
 ## Review and model quality
@@ -33,6 +33,42 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 
 Granite also rambled until the output limit in about 1 of 15 diagnosis runs, breaking the JSON. Unusable output now gets one retry at a higher temperature; 0 of 10 failed on the next trial, a small sample.
 
+## Token comparison (FinRAG, 2026-11-03)
+
+Sonnet, read-only, 4 tasks. Raw results are in `logs/token_eval/`; run with `python -m tests.eval_tokens`. "Baseline 2" runs had the server failing to start, so they are also baselines and show normal variation.
+
+| Task | Baseline | Baseline 2 | Tools available |
+|---|---|---|---|
+| Architecture | 70,379 / $0.085 | 67,249 / $0.064 | 71,256 / $0.079 |
+| `filter_sql` usage | 94,045 / $0.064 | 63,566 / $0.047 | 95,251 / $0.051 |
+| Review `app/retrieval` | 159,588 / $0.164 | 229,765 / $0.210 | 408,110 / $0.234 |
+| Debug | 64,969 / $0.063 | 65,378 / $0.055 | 66,020 / $0.057 |
+| **Total** | **388,981 / $0.376** | **425,958 / $0.375** | **640,637 / $0.421** |
+
+- The log shows the server started in all 4 tool runs and made **0 tool calls**. Claude used its own Read and Grep, so this measures the overhead of having the tools available, not delegation.
+- One sample each. Identical baseline runs differed by up to 48% in tokens on a single task, so the higher tool-run total is not good evidence of a real cost on its own. It is clearly not a saving.
+- Quality: all answers looked right. Claude's reviews found real bugs, confirmed by reading the code: `EmbeddingCache.save` can misalign vectors and keys if interrupted, and `ranked[:rerank_n]` caps results at 30 when `k` is larger. One baseline review found neither. `review_code` found neither.
+- Total spent: about $1.24.
+
+Forced delegation, with an added instruction to use the local tools first:
+
+| Task | Tokens / cost | Local tools called |
+|---|---|---|
+| Architecture | 95,128 / $0.144 | `summarize_project` |
+| `filter_sql` usage | 94,939 / $0.059 | `search_code` |
+| Review `app/retrieval` | 283,884 / $0.176 | `review_code` |
+| Debug | 96,121 / $0.063 | `search_code`, `debug_error` |
+| **Total** | **570,072 / $0.441** | 5 calls |
+
+- **No saving:** $0.441 against $0.376 and $0.375 for the baselines. The architecture run was first after the instruction changed the system prompt, so it paid a prompt-cache write. Without that task, costs are about equal, so it may be an ordering effect rather than a real cost.
+- **Worse answers:** the review still read 11 files in full, rejected all 3 local findings, and found no bugs. The usage answer said it had not read the function body. The debug answer named `PgStore.load`, which does not exist.
+- **Why, as far as these runs show:** tool results are small next to the 50,000+ tokens of a session's base context, and Claude's Read and Grep are already targeted.
+- **Limits:** one run per task, one project, Sonnet, short tasks. Long sessions and very large files are untested.
+- Total spent on all comparison runs: about $1.68.
+- Re-registered with `-P` at user scope; connected from FinRAG.
+
+Decision: the user chose to unregister the server, because the tools added to every session without a measured saving. Nothing was deleted from the repo.
+
 ## First real-code result (FinRAG, 2026-11-03)
 
 `app/retrieval`, checked by reading the cited code:
@@ -54,8 +90,8 @@ The seeded fixtures overstated quality: they contain only the bug shapes the rul
 - [x] Phase 2: LangGraph
 - [x] Phase 3: Project Intelligence
 - [ ] Phase 4: MCP Integration
-- [x] Phase 5: Advanced Agents (a real Claude Code call to the new tools is pending a reload)
-- [ ] Phase 6: Token Optimization
+- [x] Phase 5: Advanced Agents
+- [x] Phase 6: Token Optimization (no saving measured)
 
 ## Phase 4 steps
 
@@ -64,13 +100,15 @@ The seeded fixtures overstated quality: they contain only the bug shapes the rul
 - [x] 3. Test the server over real STDIO with an MCP client, confirming stdout carries only protocol messages
 - [x] 4. Register with Claude Code at user scope (approved by the user; command below)
 - [x] 5. Reload the session and test a real delegation from Claude Code. The tools loaded and were called directly in the session; `/mcp` itself is a user command and was not used
-- [ ] 6. Add the user's real projects to `ALLOWED_WORKSPACES`, which currently lists only this workspace
+- [x] 6. Add the user's real projects to `ALLOWED_WORKSPACES`. FinRAG added, read-only
 
 Registration command. User scope is recommended, because the server is meant for use across projects and its paths are specific to this machine:
 
 ```bash
-~/.vscode/extensions/anthropic.claude-code-2.1.314-darwin-arm64/resources/native-binary/claude mcp add --scope user local-agents -e PYTHONPATH=/Users/rishabhrai/ai-agent-platform -- /Users/rishabhrai/ai-agent-platform/.venv/bin/python -m app.mcp.server
+~/.vscode/extensions/anthropic.claude-code-2.1.314-darwin-arm64/resources/native-binary/claude mcp add --scope user local-agents -e PYTHONPATH=/Users/rishabhrai/ai-agent-platform -- /Users/rishabhrai/ai-agent-platform/.venv/bin/python -P -m app.mcp.server
 ```
+
+The server is not registered now. Run this to add it back.
 
 To undo: the same binary with `mcp remove --scope user local-agents`.
 
@@ -80,11 +118,11 @@ To undo: the same binary with `mcp remove --scope user local-agents`.
 
 ## Phase 6 steps
 
-- [ ] 1. Reload and verify `explain_code`, `debug_error` and `run_tests` from a real Claude Code session
-- [ ] 2. Cache project scans and LLM results by content hash
-- [ ] 3. Track files returned to Claude and result size in the metrics
-- [ ] 4. Compare actual Claude Code usage with and without delegation, on real tasks and including the per-session overhead
-- [ ] 5. Decide from the data which tools are worth keeping, including whether Granite's text earns its cost
+- [x] 1. Reload and verify `explain_code`, `debug_error` and `run_tests` from a real Claude Code session
+- [x] 2. Cache LLM results by prompt hash. Scans are not cached: at 0.23 s for 1,528 files there is nothing to gain
+- [x] 3. Add result size to the metrics and log. "Files returned to Claude" is 0 by design, since no tool returns whole files, so it is not a field
+- [x] 4. Compare actual Claude Code usage with and without delegation. No saving, whether tool use was optional or forced
+- [x] 5. Decide from the data which tools are worth keeping. Unregistered; the tools stay available from the command line
 
 ## Known limits of `run_tests`
 
@@ -102,6 +140,9 @@ Newest first.
 
 ### 2026-11-03
 
+- The user chose to unregister `local-agents`. Removed from the user config; the command line tools still work.
+- Ran the token comparison. The first 7 launches crashed before spending anything, because zsh does not split `$pair`. The next 4 "agents" runs had a failed server, so they became a second baseline. Cause: `python -m` puts the working directory first on the path, so FinRAG's `app` shadowed this one. Fixed with `-P`, confirmed connected from FinRAG, and the MCP tests now start from a folder with its own `app/`. In the valid runs, Claude made 0 tool calls.
+- Phase 6: verified `explain_code`, `debug_error` and `run_tests` from a real session, on FinRAG and this workspace; running FinRAG's tests was refused as intended. `debug_error`'s location was right, but Granite's diagnosis only restated the error. Added a model response cache: the FinRAG retrieval review went from 49 s to 0.06 s on a repeat, with 54 of 54 hits. Caching repeats wrong findings as readily as right ones. 207 tests passed.
 - Added FinRAG to `ALLOWED_WORKSPACES` (read-only); running its tests is refused as intended. First real review found 0 real bugs in 7 findings; see above. Narrowed the SQL rule to function arguments placed directly in SQL, so it now misses local variables built from outside data.
 - Phase 5: added `explain_code`, `debug_error`, `run_tests` and a deterministic Summarizer node. 189 tests passed, including real Granite calls. Tool schemas and instructions now total 5,235 characters per session. `run_tests` has its own allowlist, and only this workspace is on it. The Research Agent is still not exposed as an MCP tool, because the brief's tool list does not include it.
 - Found by a failing integration test: Granite's runaway output, now retried once at a higher temperature. Local paths are removed from debug prompts.

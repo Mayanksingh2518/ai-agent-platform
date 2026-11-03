@@ -90,6 +90,7 @@ def test_result_is_one_compact_block_without_a_structured_copy(project: Path, se
     body = json.loads(text)
     assert text == json.dumps(body, separators=(",", ":"))
     assert body["facts"]["frameworks"] == ["FastAPI"]
+    assert body["metrics"]["result_chars"] > 0
 
 
 def test_search_tool_passes_query_and_extensions(project: Path, settings: Settings) -> None:
@@ -172,17 +173,23 @@ def test_review_tool_removes_near_duplicates_through_the_summarizer(project: Pat
 
 
 def stdio_params(project: Path) -> StdioServerParameters:
-    # The environment Claude Code provides: no venv activation, and any working directory.
+    # The environment Claude Code provides: no venv activation, started in the user's project.
+    # That project may have its own `app` package, which is why -P is needed: without it, python -m
+    # puts the working directory first on the path, and FinRAG's `app` shadows this one.
+    (project / "app").mkdir(exist_ok=True)
+    (project / "app" / "__init__.py").write_text("")
     return StdioServerParameters(
         command=sys.executable,
-        args=["-m", "app.mcp.server"],
+        args=["-P", "-m", "app.mcp.server"],
         env={
             "PATH": "/usr/bin:/bin",
             "HOME": os.environ["HOME"],
             "PYTHONPATH": str(PROJECT_ROOT),
             "ALLOWED_WORKSPACES": str(project),
+            # These tests check real model calls, which a cached response would skip.
+            "LLM_CACHE_ENABLED": "false",
         },
-        cwd=str(project.parent),
+        cwd=str(project),
     )
 
 

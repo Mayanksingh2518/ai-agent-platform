@@ -35,6 +35,8 @@ class Settings(BaseModel):
     max_review_files: int = Field(default=10, gt=0)
     log_level: str = "INFO"
     log_dir: Path = PROJECT_ROOT / "logs"
+    llm_cache_enabled: bool = True
+    llm_cache_path: Path = PROJECT_ROOT / ".cache" / "llm_cache.sqlite"
 
     @property
     def max_input_chars(self) -> int:
@@ -67,6 +69,7 @@ def get_settings() -> Settings:
         "max_review_files": "MAX_REVIEW_FILES",
         "log_level": "LOG_LEVEL",
         "test_timeout_seconds": "TEST_TIMEOUT_SECONDS",
+        "llm_cache_enabled": "LLM_CACHE_ENABLED",
     }
     values = {field: os.environ[env] for field, env in env_fields.items() if env in os.environ}
     return Settings(

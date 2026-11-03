@@ -9,7 +9,7 @@ from typing import Any
 from app.config.logging_config import configure_logging
 from app.config.settings import get_settings
 from app.graph.workflow import run_task
-from app.llm import OllamaLLM
+from app.llm import build_llm
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,7 +61,7 @@ def main() -> None:
     args = parse_args()
     settings = get_settings()
     configure_logging(settings)
-    llm = OllamaLLM(settings)
+    llm = build_llm(settings)
 
     kwargs: dict[str, Any] = {"project_path": args.project_path}
     if args.command == "review":
