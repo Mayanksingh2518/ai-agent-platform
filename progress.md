@@ -4,9 +4,9 @@ The brief, rules and decisions are in [CLAUDE.md](CLAUDE.md).
 
 ## Current status
 
-- **Phase:** 3 is done. Phase 4, MCP Integration, is next.
-- **Tests:** 127 passed, including real Granite calls (`.venv/bin/python -m pytest`)
-- **MCP server:** not built, so Claude Code cannot call the agents yet
+- **Phase:** 4, MCP Integration, in progress. Registered at user scope; next, reload the session and verify with `/mcp`.
+- **Tests:** 138 passed, including real Granite calls and the real server over STDIO (`.venv/bin/python -m pytest`)
+- **MCP server:** built, tested with an SDK client and registered. A real call from Claude Code is not yet verified
 - **Token savings:** not measured
 - **Open quality issue:** Granite's review findings and prose are unreliable; see below
 
@@ -43,18 +43,25 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 
 ## Phase 4 steps
 
-- [ ] 1. Read the installed `mcp` 2.x API before writing any server code
-- [ ] 2. Implement `app/mcp/server.py` with the tools that already have agents: `analyze_project`, `search_code`, `review_code`, `summarize_project`
-- [ ] 3. Test the server over real STDIO with an MCP client, confirming stdout carries only protocol messages
-- [ ] 4. Register with Claude Code using the full binary path from `CLAUDE.md`. This changes the user's Claude Code config, so explain it first
-- [ ] 5. Verify with `/mcp`, then test a real delegation from Claude Code
+- [x] 1. Read the installed `mcp` 2.x API before writing any server code
+- [x] 2. Implement `app/mcp/server.py` with the tools that already have agents: `analyze_project`, `search_code`, `review_code`, `summarize_project`
+- [x] 3. Test the server over real STDIO with an MCP client, confirming stdout carries only protocol messages
+- [x] 4. Register with Claude Code at user scope (approved by the user; command below)
+- [ ] 5. Reload the session, verify with `/mcp`, then test a real delegation from Claude Code
 - [ ] 6. Add the user's real projects to `ALLOWED_WORKSPACES`, which currently lists only this workspace
+
+Registration command. User scope is recommended, because the server is meant for use across projects and its paths are specific to this machine:
+
+```bash
+~/.vscode/extensions/anthropic.claude-code-2.1.314-darwin-arm64/resources/native-binary/claude mcp add --scope user local-agents -e PYTHONPATH=/Users/rishabhrai/ai-agent-platform -- /Users/rishabhrai/ai-agent-platform/.venv/bin/python -m app.mcp.server
+```
+
+To undo: the same binary with `mcp remove --scope user local-agents`.
 
 ## Phase 4 reminders
 
-- The server must work from any working directory and with a minimal `PATH`. Set `PYTHONPATH` or `cwd` in the registration.
-- Tool output must say that model findings and prose are unverified and derive from untrusted repository content.
 - `debug_error`, `run_tests` and `explain_code` come in Phase 5.
+- The tool schemas and instructions add about 2,850 characters to Claude Code sessions, a cost to weigh in the Phase 6 comparison.
 
 ## Deferred
 
@@ -68,6 +75,8 @@ Newest first.
 
 ### 2026-11-03
 
+- Phase 4: read the `mcp` 2.3.0 API (FastMCP is now `MCPServer`), built the server and tested all four tools over real STDIO with a minimal environment. stdout carries only protocol messages. Results are one compact JSON block, with no structured copy, because that would send the result twice.
+- The user created a Git repo with `origin/main` and committed earlier work. `.env` is not tracked. Phase 4 changes are not committed.
 - Phase 3: added deterministic review checks with secret redaction, `project_tools`, `search_tools`, the Project Scanner, and `analyze`, `summarize` and `search` CLI commands. Installed ripgrep 15.2.0 with Homebrew, with the user's approval.
 - Found by trying LangGraph's source and by tests, then fixed: quoted secret keys were not redacted in search results, and stdlib imports were credited to local files with the same name. Also added handling for `src/` layouts and for scanning a folder that is itself a package.
 - Verified search with an empty `PATH` from another directory. LangGraph's 111 files were summarized in 2 s using 315 tokens; the routing eval is still 15/15.
@@ -75,4 +84,3 @@ Newest first.
 - Phase 1: created the venv, installed pinned dependencies, added settings, logging and the Ollama client. Tested direct Granite calls and a minimal LangGraph workflow.
 - Phase 2: added the path security layer, AgentState, Supervisor, Code Review and Research agents, conditional routing, retries and a CLI (`python -m app.main`).
 - Found and fixed two review defects: prompt injection through comments, and low recall on whole-file review (1/9).
-- Git is not initialized, and nothing has been committed.
