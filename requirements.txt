@@ -1,0 +1,6 @@
+langgraph==1.2.19
+mcp==2.3.0
+ollama==0.6.3
+pydantic==2.14.2
+pytest==9.2.0
+python-dotenv==1.2.4
