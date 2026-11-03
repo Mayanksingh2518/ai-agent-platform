@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agents.code_analyzer import explain_code
 from app.agents.code_reviewer import review_code
+from app.agents.debugger import debug_error
 from app.agents.project_scanner import analyze_project, summarize_project
 from app.agents.researcher import research
+from app.agents.summarizer import compact_result
 from app.agents.supervisor import classify_request
+from app.agents.tester import run_tests
 from app.config.settings import Settings
 from app.graph.state import AgentState, Metrics
 from app.llm import LLM
@@ -56,6 +60,30 @@ class Nodes:
             project, state.get("query", ""), state.get("extensions"), self._settings.max_file_bytes
         )
         return {"result": result.model_dump(), "metrics": Metrics(files_inspected=result.files_matched)}
+
+    def explain_code(self, state: AgentState) -> dict[str, Any]:
+        project = resolve_project(state["project_path"], self._settings)
+        result, metrics = explain_code(
+            project, state.get("file_path") or "", state.get("symbol"), self._llm, self._settings
+        )
+        return {"result": result.model_dump(), "metrics": metrics}
+
+    def debug_error(self, state: AgentState) -> dict[str, Any]:
+        project = resolve_project(state["project_path"], self._settings)
+        result, metrics = debug_error(
+            project, state.get("error_message", ""), state.get("file_path"), self._llm, self._settings
+        )
+        return {"result": result.model_dump(), "metrics": metrics}
+
+    def run_tests(self, state: AgentState) -> dict[str, Any]:
+        project = resolve_project(state["project_path"], self._settings)
+        result, metrics = run_tests(
+            project, state.get("test_path"), state.get("discover_only", False), self._settings
+        )
+        return {"result": result.model_dump(), "metrics": metrics}
+
+    def summarizer(self, state: AgentState) -> dict[str, Any]:
+        return {"result": compact_result(state["result"])}
 
     def unsupported(self, state: AgentState) -> dict[str, Any]:
         return {

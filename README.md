@@ -36,6 +36,19 @@ In `.env`, set `ALLOWED_WORKSPACES` to the absolute paths of the projects the ag
 
 # Search for literal text
 .venv/bin/python -m app.main search /path/to/project "def connect" --ext py
+
+# Explain a file, or one function or class
+.venv/bin/python -m app.main explain /path/to/project app/service.py --symbol Cart.total
+
+# Locate and diagnose an error
+.venv/bin/python -m app.main debug /path/to/project "$(cat traceback.txt)"
+
+# Describe a project's tests without running them
+.venv/bin/python -m app.main tests /path/to/project --discover-only
+
+# Run them. This executes the project's code outside any sandbox, and the project
+# must be listed in ALLOWED_TEST_WORKSPACES and have its own virtualenv.
+.venv/bin/python -m app.main tests /path/to/project --path tests/test_service.py
 ```
 
 Results are printed as JSON. Logs go to `logs/agents.log` and stderr.

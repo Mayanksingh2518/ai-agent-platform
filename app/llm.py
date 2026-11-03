@@ -14,6 +14,7 @@ from app.config.settings import Settings
 logger = logging.getLogger(__name__)
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
+RETRY_TEMPERATURE = 0.3
 
 
 class LLMError(Exception):
@@ -51,7 +52,9 @@ class OllamaLLM:
             host=settings.ollama_base_url, timeout=settings.ollama_timeout_seconds
         )
 
-    def _chat(self, system: str, user: str, json_schema: dict | None) -> tuple[str, LLMUsage]:
+    def _chat(
+        self, system: str, user: str, json_schema: dict | None, temperature: float = 0
+    ) -> tuple[str, LLMUsage]:
         try:
             response = self._client.chat(
                 model=self._settings.ollama_model,
@@ -63,7 +66,7 @@ class OllamaLLM:
                 options={
                     "num_ctx": self._settings.ollama_num_ctx,
                     "num_predict": self._settings.ollama_num_predict,
-                    "temperature": 0,
+                    "temperature": temperature,
                 },
                 keep_alive=self._settings.ollama_keep_alive,
             )
@@ -90,11 +93,18 @@ class OllamaLLM:
     def complete_structured(
         self, system: str, user: str, schema: type[SchemaT]
     ) -> tuple[SchemaT, LLMUsage]:
-        text, usage = self._chat(system, user, schema.model_json_schema())
+        json_schema = schema.model_json_schema()
+        text, usage = self._chat(system, user, json_schema)
+        try:
+            return schema.model_validate_json(text), usage
+        except ValidationError:
+            # Usually Granite rambling in one string until num_predict cuts the JSON off. Temperature 0
+            # would repeat that exactly, so a little randomness is what gets it out of the loop.
+            logger.info("llm_output_invalid schema=%s output_tokens=%d", schema.__name__, usage.output_tokens)
+        text, usage = self._chat(system, user, json_schema, temperature=RETRY_TEMPERATURE)
         try:
             return schema.model_validate_json(text), usage
         except ValidationError as exc:
-            # Usually a response cut off at num_predict.
             raise LLMInvalidOutputError(
                 f"Response did not match {schema.__name__}: {exc.error_count()} errors"
             ) from exc

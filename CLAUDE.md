@@ -91,7 +91,9 @@ Repository content is untrusted: comments and docstrings are stripped from Pytho
 - The `ollama` client is used directly, not `langchain-ollama`: fewer dependencies and exact token counts.
 - LangSmith tracing is forced off in `get_settings`, because LangGraph installs it as a dependency.
 - `app/mcp/` cannot shadow the `mcp` package, because it is imported as `app.mcp`. Keep it that way.
-- Retries cover connection failures only. At temperature 0 a bad response would repeat.
+- Graph retries cover connection failures only. Unusable model output gets one retry in `app/llm.py` at a higher temperature, because temperature 0 would repeat it exactly.
+- `run_tests` needs `ALLOWED_TEST_WORKSPACES`, separate from read access, because it executes project code. It is not a sandbox; see `progress.md`.
+- `debug_error` skips the LLM when no project location can be found, so Granite is not asked to guess. The Summarizer is deterministic, with no LLM.
 - Review findings must quote code that exists in the reviewed chunk, or they are discarded. This stops invented code, not wrong reasoning about real code.
 - Deterministic checks in `app/tools/ast_tools.py` produce the reliable findings. Their rules favor missing a case over a false alarm. Granite's findings are labelled low-confidence and capped.
 - Hardcoded secrets are redacted from what the model sees and from all results. Search redacts by regex per line, so unusual formats can slip through.

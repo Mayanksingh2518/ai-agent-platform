@@ -28,6 +28,9 @@ class Settings(BaseModel):
     ollama_timeout_seconds: float = Field(default=120, gt=0)
     ollama_keep_alive: str = "2m"
     allowed_workspaces: tuple[Path, ...] = ()
+    # Running tests executes project code, so it needs a separate, stricter opt-in.
+    allowed_test_workspaces: tuple[Path, ...] = ()
+    test_timeout_seconds: float = Field(default=120, gt=0)
     max_file_bytes: int = Field(default=200_000, gt=0)
     max_review_files: int = Field(default=10, gt=0)
     log_level: str = "INFO"
@@ -63,9 +66,11 @@ def get_settings() -> Settings:
         "max_file_bytes": "MAX_FILE_BYTES",
         "max_review_files": "MAX_REVIEW_FILES",
         "log_level": "LOG_LEVEL",
+        "test_timeout_seconds": "TEST_TIMEOUT_SECONDS",
     }
     values = {field: os.environ[env] for field, env in env_fields.items() if env in os.environ}
     return Settings(
         allowed_workspaces=_parse_workspaces(os.environ.get("ALLOWED_WORKSPACES", "")),
+        allowed_test_workspaces=_parse_workspaces(os.environ.get("ALLOWED_TEST_WORKSPACES", "")),
         **values,
     )

@@ -17,7 +17,15 @@ from app.config.settings import PROJECT_ROOT, Settings
 from app.mcp.server import build_server
 from tests.fakes import FakeLLM
 
-EXPECTED_TOOLS = {"analyze_project", "search_code", "review_code", "summarize_project"}
+EXPECTED_TOOLS = {
+    "analyze_project",
+    "search_code",
+    "review_code",
+    "summarize_project",
+    "explain_code",
+    "debug_error",
+    "run_tests",
+}
 BUGGY = "def add_item(item, items=[]):\n    items.append(item)\n    return items\n"
 
 
@@ -50,7 +58,7 @@ def text_of(result: Any) -> str:
     return result.content[0].text
 
 
-def test_expected_tools_are_listed_as_read_only(settings: Settings) -> None:
+def test_only_run_tests_is_not_marked_read_only(settings: Settings) -> None:
     async def run() -> Any:
         async with Client(build_server(FakeLLM(), settings)) as client:
             return await client.list_tools()
@@ -58,9 +66,9 @@ def test_expected_tools_are_listed_as_read_only(settings: Settings) -> None:
     tools = asyncio.run(run()).tools
     assert {tool.name for tool in tools} == EXPECTED_TOOLS
     for tool in tools:
-        assert tool.annotations.read_only_hint is True
-        assert tool.annotations.destructive_hint is False
         assert tool.description
+        assert tool.annotations.read_only_hint is (tool.name != "run_tests")
+        assert tool.annotations.destructive_hint is (tool.name == "run_tests")
 
 
 def test_no_tool_can_write_or_run_commands(settings: Settings) -> None:
@@ -121,6 +129,46 @@ def test_path_traversal_is_a_tool_error(project: Path, settings: Settings) -> No
     result = call(build_server(FakeLLM(), settings), "review_code", arguments)
     assert result.is_error is True
     assert "escapes" in result.content[0].text
+
+
+def test_explain_tool_returns_facts_and_the_notice(project: Path, settings: Settings) -> None:
+    server = build_server(FakeLLM({"explanation": "Adds an item."}), settings)
+    arguments = {"project_path": str(project), "file_path": "calc.py", "symbol": "add_item"}
+    body = json.loads(text_of(call(server, "explain_code", arguments)))
+    assert (body["start_line"], body["end_line"]) == (1, 3)
+    assert body["calls"] == ["items.append"]
+    assert "unverified" in body["notice"]
+
+
+def test_debug_tool_locates_the_error(project: Path, settings: Settings) -> None:
+    diagnosis = {"probable_root_cause": "c", "suggested_correction": "f", "line": 2, "evidence": "items.append(item)"}
+    error = f'File "{project}/calc.py", line 2, in add_item\nValueError: bad\n'
+    server = build_server(FakeLLM(diagnosis), settings)
+    body = json.loads(text_of(call(server, "debug_error", {"project_path": str(project), "error_message": error})))
+    assert body["error_type"] == "ValueError"
+    assert body["location"]["line"] == 2 and body["cause_location"]["line"] == 2
+
+
+def test_run_tests_tool_discovers_without_permission_but_will_not_run(project: Path, settings: Settings) -> None:
+    (project / "test_x.py").write_text("def test_a():\n    pass\n")
+    server = build_server(FakeLLM(), settings)
+    arguments = {"project_path": str(project), "discover_only": True}
+    body = json.loads(text_of(call(server, "run_tests", arguments)))
+    assert body["executed"] is False and body["test_functions"] == 1
+    refused = call(server, "run_tests", {"project_path": str(project)})
+    assert refused.is_error is True
+    assert "ALLOWED_TEST_WORKSPACES" in refused.content[0].text
+
+
+def test_review_tool_removes_near_duplicates_through_the_summarizer(project: Path, settings: Settings) -> None:
+    near_duplicate = {
+        "line": 2, "category": "bug", "severity": "high", "issue": "Shared list.",
+        "recommendation": "Use None.", "evidence": "items.append(item)",
+    }  # fmt: skip
+    server = build_server(FakeLLM({"findings": [near_duplicate]}), settings)
+    body = json.loads(text_of(call(server, "review_code", {"project_path": str(project), "file_path": "calc.py"})))
+    assert [f["source"] for f in body["findings"]] == ["static"]
+    assert "near-duplicate" in body["summary"]
 
 
 def stdio_params(project: Path) -> StdioServerParameters:

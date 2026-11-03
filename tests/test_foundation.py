@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
 from app.config.settings import Settings, get_settings
-from app.llm import LLMUnavailableError, OllamaLLM
+from app.llm import RETRY_TEMPERATURE, LLMInvalidOutputError, LLMUnavailableError, LLMUsage, OllamaLLM
 
 
 class Answer(BaseModel):
@@ -31,6 +31,39 @@ def test_unreachable_ollama_raises_clear_error() -> None:
     llm = OllamaLLM(Settings(ollama_base_url="http://127.0.0.1:9", ollama_timeout_seconds=2))
     with pytest.raises(LLMUnavailableError):
         llm.complete("system", "hello")
+
+
+def scripted_llm(monkeypatch: pytest.MonkeyPatch, *outputs: str) -> tuple[OllamaLLM, list[float]]:
+    llm = OllamaLLM(Settings())
+    temperatures: list[float] = []
+    remaining = list(outputs)
+
+    def fake_chat(system: str, user: str, schema: dict | None, temperature: float = 0) -> tuple[str, LLMUsage]:
+        temperatures.append(temperature)
+        return remaining.pop(0), LLMUsage(prompt_tokens=1, output_tokens=1)
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    return llm, temperatures
+
+
+def test_unusable_output_is_retried_once_with_a_different_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, temperatures = scripted_llm(monkeypatch, '{"capital": "Par', '{"capital": "Paris"}')
+    answer, _ = llm.complete_structured("s", "u", Answer)
+    assert answer.capital == "Paris"
+    assert temperatures == [0, RETRY_TEMPERATURE]
+
+
+def test_good_output_makes_only_one_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, temperatures = scripted_llm(monkeypatch, '{"capital": "Paris"}')
+    llm.complete_structured("s", "u", Answer)
+    assert temperatures == [0]
+
+
+def test_output_that_stays_unusable_raises_after_the_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, temperatures = scripted_llm(monkeypatch, "bad", "still bad")
+    with pytest.raises(LLMInvalidOutputError):
+        llm.complete_structured("s", "u", Answer)
+    assert len(temperatures) == 2
 
 
 @pytest.mark.integration

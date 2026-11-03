@@ -9,7 +9,15 @@ from pydantic import BaseModel
 from app.llm import LLMUsage
 
 TaskType = Literal[
-    "code_review", "research", "analyze_project", "search_code", "summarize_project", "unsupported"
+    "code_review",
+    "research",
+    "analyze_project",
+    "search_code",
+    "summarize_project",
+    "explain_code",
+    "debug_error",
+    "run_tests",
+    "unsupported",
 ]
 
 
@@ -45,6 +53,10 @@ class AgentState(TypedDict, total=False):
     focus: str | None
     query: str
     extensions: list[str] | None
+    symbol: str | None
+    error_message: str
+    test_path: str | None
+    discover_only: bool
     # Outputs.
     route_reason: str
     result: dict[str, Any]

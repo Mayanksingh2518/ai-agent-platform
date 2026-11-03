@@ -4,9 +4,10 @@ The brief, rules and decisions are in [CLAUDE.md](CLAUDE.md).
 
 ## Current status
 
-- **Phase:** 4, MCP Integration, in progress. Registered at user scope; next, reload the session and verify with `/mcp`.
-- **Tests:** 138 passed, including real Granite calls and the real server over STDIO (`.venv/bin/python -m pytest`)
-- **MCP server:** built, tested with an SDK client and registered. A real call from Claude Code is not yet verified
+- **Phase:** 5 is built and tested. Phase 6, Token Optimization, is next. Phase 4 step 6 still needs project paths from the user.
+- **To use the new tools:** reload VS Code, because the running server still has the old four. A real Claude Code call to `explain_code`, `debug_error` and `run_tests` is not yet verified.
+- **Tests:** see the latest log entry (`.venv/bin/python -m pytest`)
+- **MCP server:** registered at user scope. Seven tools exist; the original four are verified by real calls from Claude Code
 - **Token savings:** not measured
 - **Open quality issue:** Granite's review findings and prose are unreliable; see below
 
@@ -28,6 +29,10 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 
 `summarize_project` prose is also unverified: on LangGraph's source it added "distributed graph processing", which the facts do not show. The scanned facts are deterministic.
 
+`debug_error` diagnoses are unverified too. Given 10 made-up errors, several impossible in the code shown (an `IndexError` with no indexing, a `RecursionError` with no recursion), Granite gave a confident cause every time and never said the code did not explain the error. Parsed locations are reliable. Its evidence check only proves the quoted line exists.
+
+Granite also rambled until the output limit in about 1 of 15 diagnosis runs, breaking the JSON. Unusable output now gets one retry at a higher temperature; 0 of 10 failed on the next trial, a small sample.
+
 ## Open decisions for the user
 
 - **Try a stronger review model?** Only if Granite's findings prove not worth having in real use. The alternative is to turn off model findings by default and use static checks only. Any download needs approval.
@@ -38,7 +43,7 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 - [x] Phase 2: LangGraph
 - [x] Phase 3: Project Intelligence
 - [ ] Phase 4: MCP Integration
-- [ ] Phase 5: Advanced Agents
+- [x] Phase 5: Advanced Agents (a real Claude Code call to the new tools is pending a reload)
 - [ ] Phase 6: Token Optimization
 
 ## Phase 4 steps
@@ -47,7 +52,7 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 - [x] 2. Implement `app/mcp/server.py` with the tools that already have agents: `analyze_project`, `search_code`, `review_code`, `summarize_project`
 - [x] 3. Test the server over real STDIO with an MCP client, confirming stdout carries only protocol messages
 - [x] 4. Register with Claude Code at user scope (approved by the user; command below)
-- [ ] 5. Reload the session, verify with `/mcp`, then test a real delegation from Claude Code
+- [x] 5. Reload the session and test a real delegation from Claude Code. The tools loaded and were called directly in the session; `/mcp` itself is a user command and was not used
 - [ ] 6. Add the user's real projects to `ALLOWED_WORKSPACES`, which currently lists only this workspace
 
 Registration command. User scope is recommended, because the server is meant for use across projects and its paths are specific to this machine:
@@ -60,8 +65,19 @@ To undo: the same binary with `mcp remove --scope user local-agents`.
 
 ## Phase 4 reminders
 
-- `debug_error`, `run_tests` and `explain_code` come in Phase 5.
-- The tool schemas and instructions add about 2,850 characters to Claude Code sessions, a cost to weigh in the Phase 6 comparison.
+- The tool schemas and instructions add to every Claude Code session, a cost to weigh in the Phase 6 comparison. Measure with all seven tools.
+
+## Phase 6 steps
+
+- [ ] 1. Reload and verify `explain_code`, `debug_error` and `run_tests` from a real Claude Code session
+- [ ] 2. Cache project scans and LLM results by content hash
+- [ ] 3. Track files returned to Claude and result size in the metrics
+- [ ] 4. Compare actual Claude Code usage with and without delegation, on real tasks and including the per-session overhead
+- [ ] 5. Decide from the data which tools are worth keeping, including whether Granite's text earns its cost
+
+## Known limits of `run_tests`
+
+Not a sandbox. Test code can still read files by absolute path, use the network and write to disk; only the environment and `HOME` are cleaned. There are no memory or disk limits, and a process that starts its own session can survive the timeout kill. Only `ALLOWED_TEST_WORKSPACES` projects can run. Docker isolation is the stronger option if untrusted projects are ever added.
 
 ## Deferred
 
@@ -75,8 +91,11 @@ Newest first.
 
 ### 2026-11-03
 
+- Phase 5: added `explain_code`, `debug_error`, `run_tests` and a deterministic Summarizer node. 189 tests passed, including real Granite calls. Tool schemas and instructions now total 5,235 characters per session. `run_tests` has its own allowlist, and only this workspace is on it. The Research Agent is still not exposed as an MCP tool, because the brief's tool list does not include it.
+- Found by a failing integration test: Granite's runaway output, now retried once at a higher temperature. Local paths are removed from debug prompts.
+- Phase 4 verified from a real Claude Code session: all four tools returned correct results on this workspace, and `~/.ssh` and a `../../.ssh/config` traversal were both refused. The seeded review returned 7 static findings and 1 from Granite (the O(n^2) loop, correct, though it also claimed a stack overflow risk, which is wrong). It missed division by zero. Took 15 s and 8 local LLM calls. The user committed and pushed Phase 4.
 - Phase 4: read the `mcp` 2.3.0 API (FastMCP is now `MCPServer`), built the server and tested all four tools over real STDIO with a minimal environment. stdout carries only protocol messages. Results are one compact JSON block, with no structured copy, because that would send the result twice.
-- The user created a Git repo with `origin/main` and committed earlier work. `.env` is not tracked. Phase 4 changes are not committed.
+- The user created a Git repo with `origin/main` and committed earlier work. `.env` is not tracked.
 - Phase 3: added deterministic review checks with secret redaction, `project_tools`, `search_tools`, the Project Scanner, and `analyze`, `summarize` and `search` CLI commands. Installed ripgrep 15.2.0 with Homebrew, with the user's approval.
 - Found by trying LangGraph's source and by tests, then fixed: quoted secret keys were not redacted in search results, and stdlib imports were credited to local files with the same name. Also added handling for `src/` layouts and for scanning a folder that is itself a package.
 - Verified search with an empty `PATH` from another directory. LangGraph's 111 files were summarized in 2 s using 315 tokens; the routing eval is still 15/15.

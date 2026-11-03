@@ -94,6 +94,14 @@ class SecretLiteral(BaseModel):
     value: str
 
 
+class SymbolInfo(BaseModel):
+    name: str
+    kind: Literal["function", "class"]
+    start_line: int
+    end_line: int
+    signature: str
+
+
 class PythonOutline(BaseModel):
     functions: int
     classes: list[str]
@@ -178,6 +186,82 @@ def imported_modules(source: str, module: str, is_package: bool) -> set[str]:
                 names.add(prefix)
             names.update(f"{prefix}.{alias.name}" if prefix else alias.name for alias in node.names)
     return names
+
+
+def _symbol_kind(node: ast.AST) -> str:
+    return "class" if isinstance(node, ast.ClassDef) else "function"
+
+
+def signature_of(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
+    if isinstance(node, ast.ClassDef):
+        bases = ", ".join(ast.unparse(base) for base in node.bases)
+        return f"class {node.name}({bases})" if bases else f"class {node.name}"
+    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+    returns = f" -> {ast.unparse(node.returns)}" if node.returns else ""
+    return f"{prefix} {node.name}({ast.unparse(node.args)}){returns}"
+
+
+def list_symbols(tree: ast.Module) -> list[SymbolInfo]:
+    """List top-level functions and classes, and each class's methods as `Class.method`."""
+    symbols: list[SymbolInfo] = []
+
+    def add(node: ast.AST, name: str) -> None:
+        start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+        symbols.append(
+            SymbolInfo(
+                name=name, kind=_symbol_kind(node), start_line=start, end_line=node.end_lineno,
+                signature=signature_of(node),
+            )
+        )  # fmt: skip
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            add(node, node.name)
+        elif isinstance(node, ast.ClassDef):
+            add(node, node.name)
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    add(child, f"{node.name}.{child.name}")
+    return symbols
+
+
+def calls_in_range(tree: ast.Module, start_line: int, end_line: int) -> list[str]:
+    """Return names called within a line range, in source order and without repeats."""
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and start_line <= node.lineno <= end_line
+    ]
+    calls.sort(key=lambda call: (call.lineno, call.col_offset))
+    names = (_call_name(call.func) for call in calls)
+    return list(dict.fromkeys(name for name in names if name))
+
+
+def direct_imports(tree: ast.Module) -> list[str]:
+    """Return imported module names as written. Relative imports keep their leading dots."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.append("." * node.level + (node.module or ""))
+    return list(dict.fromkeys(names))
+
+
+def count_test_functions(source: str) -> int:
+    """Count test functions and methods. Raises SyntaxError if the source does not parse."""
+    tree = ast.parse(source)
+    count = sum(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")
+        for n in tree.body
+    )
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            count += sum(
+                isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")
+                for n in node.body
+            )
+    return count
 
 
 def redact_secrets(lines: list[str], secrets: list[SecretLiteral]) -> list[str]:
