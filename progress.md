@@ -33,9 +33,20 @@ Granite findings are labelled `source: model, confidence: low`, capped at 10 per
 
 Granite also rambled until the output limit in about 1 of 15 diagnosis runs, breaking the JSON. Unusable output now gets one retry at a higher temperature; 0 of 10 failed on the next trial, a small sample.
 
+## First real-code result (FinRAG, 2026-11-03)
+
+`app/retrieval`, checked by reading the cited code:
+
+- Before the SQL rule fix: 7 findings (2 static, 5 Granite), and **0 were real bugs**. The 2 static ones were SQL false positives, since fixed. The cost was 54 local LLM calls and 51 s, and 5 of the module's 15 files were skipped by the 10-file limit, including `retriever.py` and `store.py`.
+- Static rules after the fix, on all 95 FinRAG Python files: 1 finding (`scripts/ui_screenshot.py:46`, `open().write()` with no close), which is real but minor. Precision is 1 of 1, a tiny sample. How many real bugs they miss is unknown.
+- Granite across all real files so far: 10 findings, about 1 plausible (`researcher.py` substring matching).
+
+The seeded fixtures overstated quality: they contain only the bug shapes the rules were written for.
+
 ## Open decisions for the user
 
-- **Try a stronger review model?** Only if Granite's findings prove not worth having in real use. The alternative is to turn off model findings by default and use static checks only. Any download needs approval.
+- **Turn off Granite's review findings by default?** Recommended, given about 1 in 10 plausible on real code. Static-only review would be close to instant and use no LLM. A stronger model is the alternative; any download needs approval. They stay on until the user decides.
+- **Allow FinRAG's tests to run?** It is in `ALLOWED_WORKSPACES` for reading only, not `ALLOWED_TEST_WORKSPACES`.
 
 ## Phases
 
@@ -91,6 +102,7 @@ Newest first.
 
 ### 2026-11-03
 
+- Added FinRAG to `ALLOWED_WORKSPACES` (read-only); running its tests is refused as intended. First real review found 0 real bugs in 7 findings; see above. Narrowed the SQL rule to function arguments placed directly in SQL, so it now misses local variables built from outside data.
 - Phase 5: added `explain_code`, `debug_error`, `run_tests` and a deterministic Summarizer node. 189 tests passed, including real Granite calls. Tool schemas and instructions now total 5,235 characters per session. `run_tests` has its own allowlist, and only this workspace is on it. The Research Agent is still not exposed as an MCP tool, because the brief's tool list does not include it.
 - Found by a failing integration test: Granite's runaway output, now retried once at a higher temperature. Local paths are removed from debug prompts.
 - Phase 4 verified from a real Claude Code session: all four tools returned correct results on this workspace, and `~/.ssh` and a `../../.ssh/config` traversal were both refused. The seeded review returned 7 static findings and 1 from Granite (the O(n^2) loop, correct, though it also claimed a stack overflow risk, which is wrong). It missed division by zero. Took 15 s and 8 local LLM calls. The user committed and pushed Phase 4.

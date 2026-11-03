@@ -272,19 +272,37 @@ def redact_secrets(lines: list[str], secrets: list[SecretLiteral]) -> list[str]:
     return redacted
 
 
-def _string_built_sql(node: ast.AST) -> bool:
-    """True for SQL text combined with runtime values by +, %, .format() or an f-string."""
+def _names_in(nodes: list[ast.AST]) -> set[str]:
+    return {n.id for node in nodes for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _names_in_built_sql(node: ast.AST) -> set[str]:
+    """Return the variables combined into SQL text by +, %, .format() or an f-string."""
     if isinstance(node, ast.JoinedStr):
         text = "".join(v.value for v in node.values if isinstance(v, ast.Constant))
-        return bool(SQL_TEXT.search(text)) and any(isinstance(v, ast.FormattedValue) for v in node.values)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        if SQL_TEXT.search(text):
+            return _names_in([v for v in node.values if isinstance(v, ast.FormattedValue)])
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
         left = node.left
         while isinstance(left, ast.BinOp):
             left = left.left
-        return _is_str(left) and bool(SQL_TEXT.search(left.value))
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format":
-        return _is_str(node.func.value) and bool(SQL_TEXT.search(node.func.value.value))
-    return False
+        if _is_str(left) and SQL_TEXT.search(left.value):
+            return _names_in([node])
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+        if _is_str(node.func.value) and SQL_TEXT.search(node.func.value.value):
+            return _names_in([*node.args, *(kw.value for kw in node.keywords)])
+    return set()
+
+
+def _text_parameters(function: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> set[str]:
+    """Return arguments that could carry text. Numeric annotations and self/cls cannot inject SQL."""
+    arguments = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+    return {
+        arg.arg
+        for arg in arguments
+        if arg.arg not in {"self", "cls"}
+        and not (isinstance(arg.annotation, ast.Name) and arg.annotation.id in {"int", "float", "bool"})
+    }
 
 
 def check_python(source: str) -> list[StaticFinding]:
@@ -379,9 +397,15 @@ def check_python(source: str) -> list[StaticFinding]:
                 add(node.lineno, "bug", "medium", "File opened without being closed.",
                     "Use a with statement.")  # fmt: skip
 
-        if _string_built_sql(node):
-            add(node.lineno, "security", "high", "SQL text is built from runtime values, which allows SQL injection.",
-                "Use parameterized queries.")  # fmt: skip
+        # Only a function's own argument counts as outside data. Constants and locally built
+        # fragments are common and safe, and telling them apart needs reading the code.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            parameters = _text_parameters(node)
+            for inner in ast.walk(node):
+                if _names_in_built_sql(inner) & parameters:
+                    add(inner.lineno, "security", "high",
+                        "A function argument is placed directly in SQL text, which allows SQL injection if it can come from user input.",
+                        "Use parameterized queries.")  # fmt: skip
 
     return sorted(findings.values(), key=lambda finding: finding.line)
 
